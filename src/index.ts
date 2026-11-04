@@ -41,7 +41,8 @@ const BASECAMP_TOKEN_URL =
   "https://launchpad.37signals.com/authorization/token";
 const BASECAMP_AUTHORIZATION_URL =
   "https://launchpad.37signals.com/authorization.json";
-const USER_AGENT = "Conversion Geeks LLC Basecamp 2 MCP Connector";
+const USER_AGENT =
+  "Basecamp 2 Claude Connector (https://github.com/jarrodlowrie-hub/remote-mcp-server-authless)";
 
 function createServer() {
   const server = new McpServer({
@@ -100,14 +101,24 @@ function pageResponse(message: string, status = 400): Response {
 }
 
 function consentPage(
-  clientName: string,
-  redirectHost: string,
-  scopes: string[],
+  details: {
+    clientName: string;
+    clientDomain?: string;
+    redirectHost: string;
+    redirectIsLoopback: boolean;
+    scope: string[];
+  },
   handle: string,
 ): string {
-  const safeName = escapeHtml(clientName);
-  const safeHost = escapeHtml(redirectHost);
-  const scopeOptions = scopes
+  const clientName = escapeHtml(details.clientName);
+  const redirectHost = escapeHtml(details.redirectHost);
+  const publisher = details.clientDomain
+    ? `Published by <strong>${escapeHtml(details.clientDomain)}</strong>.`
+    : "The requesting application has not provided a verified publisher domain.";
+  const localWarning = details.redirectIsLoopback
+    ? "<p><strong>Warning:</strong> This application redirects to a local address on your device.</p>"
+    : "";
+  const scopeOptions = details.scope
     .map(
       (scope) =>
         `<label><input type="checkbox" name="scope" value="${escapeHtml(scope)}" checked> ${escapeHtml(scope)}</label>`,
@@ -123,8 +134,10 @@ function consentPage(
 </head>
 <body>
 <main>
-<h1>Allow ${safeName} to use the Basecamp 2 connector?</h1>
-<p>The requesting application will receive access to this connector at <strong>${safeHost}</strong>.</p>
+<h1>Allow ${clientName} to use the Basecamp 2 connector?</h1>
+<p>${publisher}</p>
+<p>The requesting application will receive access to this connector at <strong>${redirectHost}</strong>.</p>
+${localWarning}
 <p>The connector is being configured for read-only access to Basecamp 2 account ${BASECAMP_ACCOUNT_ID}.</p>
 <p>After you continue, 37signals will ask you to sign in and approve the connector's Basecamp access. Your Basecamp password is never shared with this connector.</p>
 <form method="post" action="/authorize">
@@ -219,18 +232,18 @@ async function refreshBasecampToken(
   if (!response.ok || !token.access_token) {
     if (response.status === 400 && token.error === "invalid_grant") {
       throw new OAuthError("invalid_grant", {
-        description: "Basecamp authorization has expired or been revoked. Please connect Basecamp again.",
+        description:
+          "Basecamp authorization has expired or been revoked. Please connect Basecamp again.",
       });
     }
     throw new OAuthError("temporarily_unavailable", {
-      description: "Basecamp token renewal is temporarily unavailable. Please try again.",
+      description:
+        "Basecamp token renewal is temporarily unavailable. Please try again.",
       statusCode: 503,
     });
   }
   return token;
 }
-
-const mcpHandlerWithOAuth = createMcpHandler(createServer);
 
 export default new OAuthProvider<ConnectorEnv>({
   apiRoute: "/mcp",
@@ -241,7 +254,7 @@ export default new OAuthProvider<ConnectorEnv>({
         return insufficientScope(ctx.auth, ["mcp:read"]);
       }
 
-      return mcpHandlerWithOAuth(request, env, ctx);
+      return mcpHandler(request, env, ctx);
     },
   },
 
@@ -257,15 +270,9 @@ export default new OAuthProvider<ConnectorEnv>({
           const consent = await oauth.beginConsent(authRequest);
           consent.headers.set("Content-Type", "text/html; charset=utf-8");
           consent.headers.set("Cache-Control", "no-store");
-          return new Response(
-            consentPage(
-              details.clientName,
-              details.redirectHost,
-              details.scope,
-              consent.handle,
-            ),
-            { headers: consent.headers },
-          );
+          return new Response(consentPage(details, consent.handle), {
+            headers: consent.headers,
+          });
         } catch {
           return pageResponse(
             "The authorization request could not be validated. Please restart the connection from your MCP client.",
@@ -279,7 +286,9 @@ export default new OAuthProvider<ConnectorEnv>({
           const form = await request.formData();
           const handle = String(form.get("handle") ?? "");
           if (!handle) {
-            return pageResponse("The authorization session is missing. Please restart the connection.");
+            return pageResponse(
+              "The authorization session is missing. Please restart the connection.",
+            );
           }
 
           if (form.get("decision") !== "approve") {
@@ -417,7 +426,8 @@ export default new OAuthProvider<ConnectorEnv>({
       props.basecampAccountId !== BASECAMP_ACCOUNT_ID
     ) {
       throw new OAuthError("invalid_grant", {
-        description: "The Basecamp authorization is missing. Please connect Basecamp again.",
+        description:
+          "The Basecamp authorization is missing. Please connect Basecamp again.",
       });
     }
 
