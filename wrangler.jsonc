@@ -12,8 +12,11 @@
 	"global_fetch_strictly_public"
 ],
 	"observability": {
-		"enabled": true,
-	},
+    "enabled": true,
+    "logs": {
+        "invocation_logs": false
+    }
+},
 	"kv_namespaces": [
 		{
 			"binding": "OAUTH_KV",
