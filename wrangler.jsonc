@@ -11,4 +11,10 @@
 	"observability": {
 		"enabled": true,
 	},
+	"kv_namespaces": [
+		{
+			"binding": "OAUTH_KV",
+			"id": "7535cfbee958483da1cc01c5af24c1a2"
+		}
+	],
 }
