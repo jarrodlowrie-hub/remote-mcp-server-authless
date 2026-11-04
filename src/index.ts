@@ -1,66 +1,84 @@
+import { OAuthProvider, insufficientScope } from "@cloudflare/workers-oauth-provider";
 import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpHandler } from "agents/mcp/server";
 import { z } from "zod";
 
+interface ConnectorEnv {
+	OAUTH_KV: KVNamespace;
+}
+
+const ORIGIN =
+	"https://remote-mcp-server-authless.jarrod-lowrie.workers.dev";
+
 function createServer() {
 	const server = new McpServer({
-		name: "Authless Calculator",
-		version: "1.0.0",
+		name: "Basecamp 2 Read-Only Connector",
+		version: "0.1.0",
 	});
 
 	server.registerTool(
-		"add",
-		{ inputSchema: z.object({ a: z.number(), b: z.number() }) },
-		async ({ a, b }) => ({
-			content: [{ type: "text", text: String(a + b) }],
-		}),
-	);
-
-	server.registerTool(
-		"calculate",
+		"connector_status",
 		{
-			inputSchema: z.object({
-				operation: z.enum(["add", "subtract", "multiply", "divide"]),
-				a: z.number(),
-				b: z.number(),
-			}),
+			description: "Check the connector setup status.",
+			inputSchema: z.object({}),
 		},
-		async ({ operation, a, b }) => {
-			let result: number;
-			switch (operation) {
-				case "add":
-					result = a + b;
-					break;
-				case "subtract":
-					result = a - b;
-					break;
-				case "multiply":
-					result = a * b;
-					break;
-				case "divide":
-					if (b === 0)
-						return {
-							content: [
-								{
-									type: "text",
-									text: "Error: Cannot divide by zero",
-								},
-							],
-						};
-					result = a / b;
-					break;
-			}
-			return { content: [{ type: "text", text: String(result) }] };
-		},
+		async () => ({
+			content: [
+				{
+					type: "text",
+					text: "Authentication foundation installed. Basecamp access is not configured yet.",
+				},
+			],
+		}),
 	);
 
 	return server;
 }
 
-const handler = createMcpHandler(createServer);
+const mcpHandler = createMcpHandler(createServer);
 
-export default {
-	fetch(request: Request, env: Env, ctx: ExecutionContext) {
-		return handler(request, env, ctx);
+export default new OAuthProvider<ConnectorEnv>({
+	apiRoute: "/mcp",
+
+	apiHandler: {
+		fetch(request, env, ctx) {
+			if (!ctx.auth.scope.includes("mcp:read")) {
+				return insufficientScope(ctx.auth, ["mcp:read"]);
+			}
+
+			return mcpHandler(request, env, ctx);
+		},
 	},
-} satisfies ExportedHandler<Env>;
+
+	defaultHandler: {
+		async fetch(request) {
+			const path = new URL(request.url).pathname;
+
+			if (path === "/authorize" || path === "/basecamp/callback") {
+				return new Response(
+					"Basecamp sign-in is not configured yet. Access remains disabled.",
+					{
+						status: 503,
+						headers: {
+							"Content-Type": "text/plain; charset=utf-8",
+							"Cache-Control": "no-store",
+						},
+					},
+				);
+			}
+
+			return new Response("Not found", { status: 404 });
+		},
+	},
+
+	authorizeEndpoint: "/authorize",
+	tokenEndpoint: "/oauth/token",
+	scopesSupported: ["mcp:read"],
+	requiredScopes: ["mcp:read"],
+	clientIdMetadataDocumentEnabled: true,
+
+	resourceMetadata: {
+		resource: `${ORIGIN}/mcp`,
+		authorization_servers: [ORIGIN],
+	},
+});
