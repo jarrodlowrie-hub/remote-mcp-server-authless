@@ -3,12 +3,15 @@ import {
   OAuthProvider,
   authorizationErrorRedirect,
   insufficientScope,
+  type OAuthHelpers,
+  type OAuthResourceContext,
 } from "@cloudflare/workers-oauth-provider";
 import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpHandler } from "agents/mcp/server";
 import { z } from "zod";
 
 interface ConnectorEnv {
+  OAUTH_PROVIDER: OAuthHelpers;
   OAUTH_KV: KVNamespace;
   BASECAMP_CLIENT_ID: string;
   BASECAMP_CLIENT_SECRET: string;
@@ -250,8 +253,10 @@ export default new OAuthProvider<ConnectorEnv>({
 
   apiHandler: {
     fetch(request, env, ctx) {
-      if (!ctx.auth.scope.includes("mcp:read")) {
-        return insufficientScope(ctx.auth, ["mcp:read"]);
+      // OAuthProvider supplies auth at runtime; its legacy handler type omits it.
+      const auth = (ctx as OAuthResourceContext<unknown>).auth;
+      if (!auth.scope.includes("mcp:read")) {
+        return insufficientScope(auth, ["mcp:read"]);
       }
 
       return mcpHandler(request, env, ctx);
